@@ -76,7 +76,7 @@ LiveKit 将 <SERVER_IP> 作为公网候选地址。没有 TURN/TLS，严苛网�
     docker run --rm --network host -v /opt/voice-hub/tests:/tests:ro node:22.23.3-alpine node /tests/members.mjs
     docker run --rm --network host -v /opt/voice-hub/tests:/tests:ro -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e BASE_URL=https://<SERVER_IP> node:22.23.3-alpine node /tests/members.mjs
 
-浏览器测试（voice-hub-browser-check 镜像，报告写入挂载的 /reports）：smoke、house-smoke、media-controls、house-media、listen-only、voice-processing、appearance、appearance-edge。
+浏览器测试（voice-hub-browser-check 镜像，报告写入挂载的 /reports）：smoke、house-smoke、media-controls、house-media、listen-only、voice-processing、mic-test、appearance、appearance-edge。
 
 测试脚本不包含在生产镜像内，使用独立临时 Node 容器执行。
 完成标准：两位独立用户在安全上下文内双向听见声音、静音/退出正确、一方屏幕分享另一方实际看到、停止后消失、重连清理、权限隔离、容器重启后数据保留。
@@ -120,6 +120,8 @@ LiveKit 应答允许 Opus 最高 510kbps，实际码率仍受网络与浏览器�
 - 立体声高保真 / 极致档位不做降噪与人声凸显，以免损伤音乐。
 - 扬声器选择依赖浏览器 setSinkId；不支持时界面提示在系统设置中切换。
 - CSP 需包含 script-src 'wasm-unsafe-eval' 以编译降噪模型。
+- 声音测试（回环）：“录音 5 秒并回放”按所选音质码率经 Opus 编码后从所选扬声器回放，接近对方听到的效果，外放也不会啸叫；“实时监听”需佩戴耳机。
+  通话中且麦克风开启时测试的是正在发送的声音；否则按当前设备、降噪与人声凸显设置单独采集，不会发送到频道。
 
 浏览器测试 voice-processing.mjs 覆盖以上切换；Chromium 假麦克风为持续蜂鸣音，会被 AI 降噪视为噪声消除，真实人声效果需实测。
 可在分享或通话中调整；档位保存在设备浏览器偏好中，实际源分辨率、设备、浏览器与网络影响最终效果。

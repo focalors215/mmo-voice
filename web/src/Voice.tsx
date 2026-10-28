@@ -7,6 +7,7 @@ import {
   type ScreenQuality, type AudioQuality,
 } from './mediaQuality';
 import { VoiceProcessor, isAiNoise, noiseModes, voiceAudioContext, type NoiseMode } from './voiceProcessing';
+import MicTest, { type TestSource } from './MicTest';
 
 function savedQuality<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -487,6 +488,30 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
       if (room.current === r) setError((kind === 'audioinput' ? '无法切换麦克风：' : '无法切换扬声器：') + (e.message || '设备不可用'));
     }
   }
+  // The loopback test hears what would be sent: the live (processed) track in a call, otherwise a capture with the same settings.
+  async function testSource(): Promise<TestSource> {
+    const r = room.current, live = r && micTrack(r);
+    if (live && !live.isMuted && live.mediaStreamTrack.readyState === 'live') {
+      const track = live.mediaStreamTrack.clone();
+      return { track, release: () => track.stop(), live: true };
+    }
+    const { deviceId, channelCount, sampleRate, echoCancellation, noiseSuppression, autoGainControl } = micCapture();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: deviceId ? { ideal: deviceId as string } : undefined, channelCount, sampleRate, echoCancellation, noiseSuppression, autoGainControl },
+    });
+    const raw = stream.getAudioTracks()[0];
+    void refreshDevices(); // permission may have just been granted
+    const mode = noiseRef.current, wantBoost = boostRef.current;
+    if (isStereoAudio(audioQualityRef.current) || (!isAiNoise(mode) && !wantBoost)) return { track: raw, release: () => raw.stop(), live: false };
+    const processor = new VoiceProcessor(isAiNoise(mode) ? mode : 'off', wantBoost);
+    try {
+      await processor.init({ kind: Track.Kind.Audio, track: raw, audioContext: voiceAudioContext() });
+    } catch (e) {
+      raw.stop();
+      throw e;
+    }
+    return { track: processor.processedTrack!, release: () => { void processor.destroy(); raw.stop(); }, live: false };
+  }
   function toggleDeaf() {
     deaf.current = !deaf.current;
     for (const [track, elements] of media.current)
@@ -562,6 +587,12 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
           <input type="checkbox" role="switch" aria-label="人声凸显" checked={boost} onChange={event => { void changeBoost(event.target.checked); }} />
         </label>
       </div>
+      <MicTest
+        getSource={testSource}
+        bitrate={audioProfiles.find(p => p.id === audioQuality)?.bitrate ?? 48_000}
+        outputId={outputId}
+        disabled={!secure || busy}
+      />
       {inputs.length > 0 && inputs.every(d => !d.label) && <small className="audio-settings-note">加入语音并允许麦克风后会显示设备名称。</small>}
       {isStereoAudio(audioQuality) && <small className="audio-settings-note">当前为立体声音乐档位，降噪与人声凸显不生效。</small>}
     </details>

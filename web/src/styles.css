@@ -1451,6 +1451,68 @@ input:focus {
   font-size: 0.75rem;
   font-weight: 400;
 }
+/* Loopback test */
+.mic-test {
+  display: grid;
+  gap: 10px;
+  margin: 0 14px 14px;
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
+  background: var(--house-panel);
+}
+.mic-test-head > span {
+  display: grid;
+  gap: 2px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.mic-test-head small {
+  color: var(--house-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+.mic-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--house-fill);
+  overflow: hidden;
+}
+.mic-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transform-origin: left center;
+  background: linear-gradient(90deg, #34c759 0 70%, #ffcc00 70% 88%, #ff3b30 88%);
+  background-size: 100% 100%;
+  transition: transform 60ms linear;
+}
+.mic-test[data-mode='playing'] .mic-meter span {
+  background: var(--house-accent);
+  animation: playback 5s linear both;
+  transform-origin: left center;
+}
+@keyframes playback {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+.mic-test-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mic-test-actions button {
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 0.875rem;
+}
+.mic-test .audio-settings-note {
+  padding: 0;
+}
+
 /* iOS-style switch */
 .switch-row input[type='checkbox'] {
   appearance: none;
