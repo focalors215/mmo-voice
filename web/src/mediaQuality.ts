@@ -92,14 +92,14 @@ export async function applyScreenQuality(room: Room, quality: ScreenQuality): Pr
     throw error;
   }
 }
-export async function applyAudioQuality(room: Room, quality: AudioQuality): Promise<AppliedQualityResult> {
+export async function applyAudioQuality(room: Room, quality: AudioQuality, overrides: MediaTrackConstraints = {}): Promise<AppliedQualityResult> {
   const publication = room.localParticipant.getTrackPublication(Track.Source.Microphone);
   const track = publication?.track;
   if (!(track instanceof LocalAudioTrack)) throw new Error('当前没有正在发布的麦克风');
   const p = audioProfile(quality);
   const previousConstraints = track.mediaStreamTrack.getConstraints();
   let captureApplied = false;
-  try { await track.mediaStreamTrack.applyConstraints({ ...p.capture }); captureApplied = true; } catch { /* unsupported constraints do not interrupt calls */ }
+  try { await track.mediaStreamTrack.applyConstraints({ ...p.capture, ...overrides }); captureApplied = true; } catch { /* unsupported constraints do not interrupt calls */ }
   try {
     const publishApplied = await applySenderBitrate(track, p.bitrate);
     if (!publishApplied && captureApplied) await revertConstraints(track, previousConstraints);

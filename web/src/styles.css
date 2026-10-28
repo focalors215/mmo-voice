@@ -1195,7 +1195,8 @@ input:focus {
   font-size: 0.8125rem;
   font-weight: 600;
 }
-.media-quality select {
+.media-quality select,
+.audio-settings select {
   min-height: 36px;
   padding: 6px 32px 6px 12px;
   border: 0;
@@ -1359,6 +1360,142 @@ input:focus {
 }
 .voice > .error {
   margin-top: 12px;
+}
+
+/* Sound & devices: a disclosure group, closed by default so the stage keeps its room. */
+.audio-settings {
+  margin: 0 0 14px;
+  border-radius: var(--r-md);
+  background: var(--house-fill);
+}
+.audio-settings summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  border-radius: var(--r-md);
+}
+.audio-settings summary::-webkit-details-marker {
+  display: none;
+}
+.audio-settings summary::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-right: 2px solid var(--house-muted);
+  border-bottom: 2px solid var(--house-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--t-med) var(--ease-out);
+}
+.audio-settings[open] summary::after {
+  transform: rotate(45deg);
+}
+.audio-settings summary small {
+  color: var(--house-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+.audio-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 14px;
+  padding: 4px 14px 14px;
+  animation: fade var(--t-med) ease both;
+}
+.audio-settings label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--house-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.audio-settings select {
+  width: 100%;
+  min-width: 0;
+  background-color: var(--house-panel);
+  text-overflow: ellipsis;
+}
+.audio-settings-note {
+  display: block;
+  margin: 0;
+  padding: 0 14px 12px;
+  color: var(--house-muted);
+  font-size: 0.8125rem;
+}
+.audio-settings-grid .audio-settings-note {
+  padding: 0;
+  align-self: end;
+}
+.switch-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  align-self: end;
+  min-height: 44px;
+  cursor: pointer;
+}
+.switch-row > span {
+  display: grid;
+  gap: 2px;
+  color: var(--house-text);
+  font-size: 0.9375rem;
+}
+.switch-row small {
+  color: var(--house-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+/* iOS-style switch */
+.switch-row input[type='checkbox'] {
+  appearance: none;
+  position: relative;
+  width: 51px;
+  min-width: 51px;
+  height: 31px;
+  min-height: 31px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--house-fill-strong);
+  cursor: pointer;
+  transition: background-color var(--t-med) ease;
+}
+.switch-row input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 3px 8px rgb(0 0 0 / 15%), 0 1px 1px rgb(0 0 0 / 16%);
+  transition: transform var(--t-med) var(--ease-spring);
+}
+.switch-row input[type='checkbox']:checked {
+  background: #34c759;
+}
+.switch-row input[type='checkbox']:checked::after {
+  transform: translateX(20px);
+}
+.switch-row input[type='checkbox']:focus {
+  box-shadow: none;
+}
+.switch-row input[type='checkbox']:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--house-accent) 55%, transparent);
+  outline-offset: 2px;
+}
+@media (prefers-contrast: more) {
+  .switch-row input[type='checkbox'] {
+    box-shadow: inset 0 0 0 1px var(--house-text);
+  }
 }
 
 /* ---------- Motion ---------- */

@@ -76,7 +76,7 @@ LiveKit 将 <SERVER_IP> 作为公网候选地址。没有 TURN/TLS，严苛网�
     docker run --rm --network host -v /opt/voice-hub/tests:/tests:ro node:22.23.3-alpine node /tests/members.mjs
     docker run --rm --network host -v /opt/voice-hub/tests:/tests:ro -e NODE_TLS_REJECT_UNAUTHORIZED=0 -e BASE_URL=https://<SERVER_IP> node:22.23.3-alpine node /tests/members.mjs
 
-浏览器测试（voice-hub-browser-check 镜像，报告写入挂载的 /reports）：smoke、house-smoke、media-controls、house-media、listen-only。
+浏览器测试（voice-hub-browser-check 镜像，报告写入挂载的 /reports）：smoke、house-smoke、media-controls、house-media、listen-only、voice-processing、appearance、appearance-edge。
 
 测试脚本不包含在生产镜像内，使用独立临时 Node 容器执行。
 完成标准：两位独立用户在安全上下文内双向听见声音、静音/退出正确、一方屏幕分享另一方实际看到、停止后消失、重连清理、权限隔离、容器重启后数据保留。
@@ -108,6 +108,20 @@ HTTPS 检查的两个临时测试账号及其社区已清理，不影响正式�
 麦克风音质：Opus单声道省流24kbps、标准48kbps、高音质96kbps；立体声高保真192kbps、极致320kbps。
 立体声档位关闭浏览器回声消除、降噪和自动增益，适合唱歌、乐器或播放音乐，需佩戴耳机；单声道与立体声互相切换时会重新发布麦克风（静音状态下只在重新开麦时生效）。
 LiveKit 应答允许 Opus 最高 510kbps，实际码率仍受网络与浏览器限制。
+
+## 降噪、人声凸显与设备选择
+
+语音页的“声音与设备”中可选择麦克风、扬声器、降噪方式和人声凸显，选择保存在当前浏览器。
+所有处理都在成员自己的浏览器内完成（发送前处理），服务器不做音频运算：项目服务器为 2 vCPU、无 GPU，
+逐路服务端解码、降噪、再编码既占满 CPU 又增加延迟；LiveKit Krisp 仅限 LiveKit Cloud。
+
+- 降噪：关闭 / 标准（浏览器内置） / AI 降噪（RNNoise） / AI 强力降噪（GTCRN），由 @sapphi-red/web-noise-suppressor 的 AudioWorklet + WASM 实现，模型文件约 115 KB（gzip），仅在启用时下载。
+- 人声凸显：80 Hz 高通、250 Hz 去浑浊、3.2 kHz 清晰度提升、高频空气感、压缩器与限幅器。
+- 立体声高保真 / 极致档位不做降噪与人声凸显，以免损伤音乐。
+- 扬声器选择依赖浏览器 setSinkId；不支持时界面提示在系统设置中切换。
+- CSP 需包含 script-src 'wasm-unsafe-eval' 以编译降噪模型。
+
+浏览器测试 voice-processing.mjs 覆盖以上切换；Chromium 假麦克风为持续蜂鸣音，会被 AI 降噪视为噪声消除，真实人声效果需实测。
 可在分享或通话中调整；档位保存在设备浏览器偏好中，实际源分辨率、设备、浏览器与网络影响最终效果。
 调整通过现有采集轨道约束和发送编码参数完成，不重新发布轨道，不弹新屏幕选择器；保持麦克风与收听静音。
 音频协商上限96kbps，实际编码上限按所选档位应用，支持从低档切高档。重连后重新应用所选档位。

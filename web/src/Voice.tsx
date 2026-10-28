@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client';
+import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track } from 'livekit-client';
 import {
   screenProfiles, audioProfiles, applyScreenQuality, applyAudioQuality,
   buildScreenCaptureOptions, buildScreenPublishOptions,
   buildMicrophoneCaptureOptions, buildMicrophonePublishOptions, audioNeedsRepublish, isStereoAudio,
   type ScreenQuality, type AudioQuality,
 } from './mediaQuality';
+import { VoiceProcessor, isAiNoise, noiseModes, voiceAudioContext, type NoiseMode } from './voiceProcessing';
 
 function savedQuality<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -16,6 +17,11 @@ function savedQuality<T extends string>(key: string, allowed: readonly T[], fall
 function saveQuality(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* Preferences are optional. */ }
 }
+function savedString(key: string) {
+  try { return localStorage.getItem(key) || ''; } catch { return ''; }
+}
+const canPickOutput = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
+const deviceLabel = (d: MediaDeviceInfo, i: number) => d.label || (d.kind === 'audioinput' ? '麦克风 ' : '扬声器 ') + (i + 1);
 
 
 type Channel = { id: string | number; name: string; type: 'text' | 'voice' };
@@ -33,6 +39,16 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
   const screenQualityRef = useRef(screenQuality);
   const audioQualityRef = useRef(audioQuality);
   const [qualityNotice, setQualityNotice] = useState('');
+  const [noise, setNoise] = useState<NoiseMode>(() => savedQuality('voice-hub.noise', noiseModes.map(m => m.id), 'browser'));
+  const [boost, setBoost] = useState(() => savedString('voice-hub.voice-boost') === '1');
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
+  const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [inputId, setInputId] = useState(() => savedString('voice-hub.audio-input'));
+  const [outputId, setOutputId] = useState(() => savedString('voice-hub.audio-output'));
+  const noiseRef = useRef(noise);
+  const boostRef = useRef(boost);
+  const inputRef = useRef(inputId);
+  const outputRef = useRef(outputId);
 
   const room = useRef<Room | null>(null);
   const epoch = useRef(0);
@@ -107,6 +123,21 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
   }, []);
 
 
+  const refreshDevices = useCallback(async () => {
+    try {
+      const all = (await navigator.mediaDevices?.enumerateDevices()) ?? [];
+      // Chrome adds 'default'/'communications' aliases; the 系统默认 option already covers them.
+      const real = (kind: MediaDeviceKind) => all.filter(d => d.kind === kind && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
+      setInputs(real('audioinput'));
+      setOutputs(real('audiooutput'));
+    } catch { /* device listing is optional */ }
+  }, []);
+  useEffect(() => {
+    void refreshDevices();
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshDevices);
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', refreshDevices);
+  }, [refreshDevices]);
+
   const closeRoom = (r: Room) => {
     r.removeAllListeners();
     for (const p of r.localParticipant.trackPublications.values()) p.track?.stop();
@@ -149,6 +180,43 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
       })),
     });
   }
+  // Browser noise suppression is a capture constraint; the AI modes and voice emphasis run in VoiceProcessor instead.
+  function micCapture(quality: AudioQuality = audioQualityRef.current) {
+    const options = buildMicrophoneCaptureOptions(quality);
+    if (!isStereoAudio(quality)) options.noiseSuppression = noiseRef.current === 'browser';
+    if (inputRef.current) options.deviceId = inputRef.current;
+    return options;
+  }
+  function applyAudio(r: Room, quality: AudioQuality) {
+    return applyAudioQuality(r, quality, isStereoAudio(quality) ? {} : { noiseSuppression: noiseRef.current === 'browser' });
+  }
+  function micTrack(r: Room) {
+    const track = r.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    return track instanceof LocalAudioTrack ? track : null;
+  }
+  async function syncProcessor(r: Room) {
+    const track = micTrack(r);
+    if (!track) return;
+    const mode = noiseRef.current, wantBoost = boostRef.current;
+    if (isStereoAudio(audioQualityRef.current) || (!isAiNoise(mode) && !wantBoost)) {
+      if (track.getProcessor()) await track.stopProcessor();
+      return;
+    }
+    const current = track.getProcessor();
+    const wantNoise = isAiNoise(mode) ? mode : 'off';
+    if (current instanceof VoiceProcessor && current.noise === wantNoise && current.boost === wantBoost) return;
+    track.setAudioContext(voiceAudioContext());
+    await track.setProcessor(new VoiceProcessor(wantNoise, wantBoost));
+  }
+  async function safeSync(r: Room) {
+    try {
+      await syncProcessor(r);
+    } catch (e: any) {
+      try { await micTrack(r)?.stopProcessor(); } catch { /* already plain */ }
+      if (room.current === r) setError('此浏览器无法启用 AI 降噪或人声凸显，已使用原始麦克风：' + (e?.message || '未知错误'));
+    }
+  }
+
   function detach(track: any, r: Room) {
     const elements = media.current.get(track);
     track.detach();
@@ -216,7 +284,10 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
       if (response.status === 401) window.dispatchEvent(new Event('voicehub:unauthorized'));
       if (!response.ok) throw new Error(data.error || '无法加入频道，请稍后重试');
       if (!active()) return;
-      r = new Room({ adaptiveStream: true, dynacast: true });
+      r = new Room({
+        adaptiveStream: true, dynacast: true,
+        audioOutput: canPickOutput && outputRef.current ? { deviceId: outputRef.current } : undefined,
+      });
       const joined = r;
       room.current = joined;
       const guard = () => active() && room.current === joined;
@@ -244,8 +315,10 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
         if (!guard()) return;
         setBusy(true);
         void (async () => {
-          if (joined.localParticipant.getTrackPublication(Track.Source.Microphone)?.track)
-            await applyAudioQuality(joined, audioQualityRef.current);
+          if (joined.localParticipant.getTrackPublication(Track.Source.Microphone)?.track) {
+            await applyAudio(joined, audioQualityRef.current);
+            await safeSync(joined);
+          }
           if (guard() && joined.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track)
             await applyScreenQuality(joined, screenQualityRef.current);
           if (guard()) update(joined);
@@ -267,13 +340,17 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
       // Without a usable microphone the member still joins to listen; the mic can be retried from the controls.
       let micReady = false;
       try {
-        await joined.localParticipant.setMicrophoneEnabled(true, buildMicrophoneCaptureOptions(audioQualityRef.current), buildMicrophonePublishOptions(audioQualityRef.current));
+        await joined.localParticipant.setMicrophoneEnabled(true, micCapture(), buildMicrophonePublishOptions(audioQualityRef.current));
         micReady = true;
+        void refreshDevices(); // labels become available once permission is granted
       } catch (e: any) {
         if (guard()) setError(e.name === 'NotAllowedError' ? '麦克风权限未获允许，已以仅收听方式加入；修改浏览器权限后可点击“开启麦克风”。' : '麦克风无法使用，已以仅收听方式加入：' + (e.message || '未知错误'));
       }
       if (!guard()) { closeRoom(joined); return; }
-      if (micReady) await applyAudioQuality(joined, audioQualityRef.current);
+      if (micReady) {
+        await applyAudio(joined, audioQualityRef.current);
+        if (guard()) await safeSync(joined);
+      }
       if (!guard()) { closeRoom(joined); return; }
       update(joined);
     } catch (e: any) {
@@ -292,9 +369,12 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
     setError('');
     try {
       if (kind === 'mic') {
-        await r.localParticipant.setMicrophoneEnabled(!r.localParticipant.isMicrophoneEnabled, buildMicrophoneCaptureOptions(audioQualityRef.current), buildMicrophonePublishOptions(audioQualityRef.current));
+        await r.localParticipant.setMicrophoneEnabled(!r.localParticipant.isMicrophoneEnabled, micCapture(), buildMicrophonePublishOptions(audioQualityRef.current));
         if (room.current !== r || epoch.current !== current) { closeRoom(r); return; }
-        if (r.localParticipant.isMicrophoneEnabled) await applyAudioQuality(r, audioQualityRef.current);
+        if (r.localParticipant.isMicrophoneEnabled) {
+          await applyAudio(r, audioQualityRef.current);
+          await safeSync(r);
+        }
       } else await r.localParticipant.setScreenShareEnabled(!r.localParticipant.isScreenShareEnabled, buildScreenCaptureOptions(screenQualityRef.current), buildScreenPublishOptions(screenQualityRef.current));
       if (room.current !== r || epoch.current !== current) { closeRoom(r); return; }
       update(r);
@@ -320,16 +400,16 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
         await r.localParticipant.unpublishTrack(publication.track);
         if (room.current !== r || epoch.current !== current) return;
         if (!muted) {
-          await r.localParticipant.setMicrophoneEnabled(true, buildMicrophoneCaptureOptions(value as AudioQuality), buildMicrophonePublishOptions(value as AudioQuality));
+          await r.localParticipant.setMicrophoneEnabled(true, micCapture(value as AudioQuality), buildMicrophonePublishOptions(value as AudioQuality));
           if (room.current !== r || epoch.current !== current) return;
-          const applied = await applyAudioQuality(r, value as AudioQuality);
+          const applied = await applyAudio(r, value as AudioQuality);
           if (room.current !== r || epoch.current !== current) return;
           if (!applied.publishApplied) throw new Error('当前浏览器无法调整音频编码参数，请重新加入后设置档位。');
         }
       } else if (r && publication?.track) {
         const applied = kind === 'screen'
           ? await applyScreenQuality(r, value as ScreenQuality)
-          : await applyAudioQuality(r, value as AudioQuality);
+          : await applyAudio(r, value as AudioQuality);
         if (room.current !== r || epoch.current !== current) return;
         if (!applied.publishApplied) throw new Error('当前浏览器无法动态调整编码参数，请重新加入后设置档位。');
         if (kind === 'screen' && !applied.captureApplied)
@@ -347,11 +427,64 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
         if (isStereoAudio(value as AudioQuality))
           setQualityNotice('立体声高码率模式关闭了回声消除、降噪和自动增益，请佩戴耳机，避免对方听到回声。');
       }
+      if (r && kind === 'audio' && room.current === r) await safeSync(r);
       if (r) update(r);
     } catch (e: any) {
       if (epoch.current === current) setError(e.message || '档位调整失败，请重试。');
     } finally {
       if (epoch.current === current) setBusy(false);
+    }
+  }
+  async function changeNoise(next: NoiseMode) {
+    const previous = noiseRef.current;
+    noiseRef.current = next;
+    setNoise(next);
+    saveQuality('voice-hub.noise', next);
+    if (isAiNoise(next)) voiceAudioContext(); // create/resume inside the click
+    const r = room.current, track = r && micTrack(r);
+    if (!r || !track || isStereoAudio(audioQualityRef.current)) return;
+    setBusy(true);
+    setError('');
+    try {
+      if ((previous === 'browser') !== (next === 'browser')) {
+        // The browser's own suppression is fixed at capture; a muted mic is recaptured when turned back on.
+        if (track.isMuted) await r.localParticipant.unpublishTrack(track);
+        else await track.restartTrack(micCapture());
+      }
+      if (room.current === r) await safeSync(r);
+      if (room.current === r) update(r);
+    } catch (e: any) {
+      if (room.current === r) setError(e.message || '降噪设置失败，请重试。');
+    } finally {
+      if (room.current === r) setBusy(false);
+    }
+  }
+  async function changeBoost(next: boolean) {
+    boostRef.current = next;
+    setBoost(next);
+    saveQuality('voice-hub.voice-boost', next ? '1' : '0');
+    if (next) voiceAudioContext();
+    const r = room.current;
+    if (r && micTrack(r)) await safeSync(r);
+  }
+  async function changeDevice(kind: 'audioinput' | 'audiooutput', id: string) {
+    const ref = kind === 'audioinput' ? inputRef : outputRef;
+    const previous = ref.current;
+    ref.current = id;
+    (kind === 'audioinput' ? setInputId : setOutputId)(id);
+    saveQuality(kind === 'audioinput' ? 'voice-hub.audio-input' : 'voice-hub.audio-output', id);
+    const r = room.current;
+    if (!r || (kind === 'audioinput' && !micTrack(r))) return;
+    const list = kind === 'audioinput' ? inputs : outputs;
+    // 系统默认: Chrome exposes a 'default' device; other browsers fall back to the first listed one.
+    const target = id || ((await navigator.mediaDevices.enumerateDevices()).some(d => d.kind === kind && d.deviceId === 'default') ? 'default' : list[0]?.deviceId);
+    if (!target) return;
+    try {
+      await r.switchActiveDevice(kind, target);
+    } catch (e: any) {
+      ref.current = previous;
+      (kind === 'audioinput' ? setInputId : setOutputId)(previous);
+      if (room.current === r) setError((kind === 'audioinput' ? '无法切换麦克风：' : '无法切换扬声器：') + (e.message || '设备不可用'));
     }
   }
   function toggleDeaf() {
@@ -399,6 +532,39 @@ export default function Voice({ ch, secure }: { ch: Channel; secure: boolean }) 
       <small>{busy ? '正在调整…' : '可在通话中切换；实际画质取决于分享源、浏览器和网络。'}</small>
       {qualityNotice && <small role="status">{qualityNotice}</small>}
     </div>
+    <details className="audio-settings">
+      <summary>
+        <span>声音与设备</span>
+        <small>{noiseModes.find(m => m.id === noise)?.label}{boost ? ' · 人声凸显' : ''}</small>
+      </summary>
+      <div className="audio-settings-grid">
+        <label>麦克风
+          <select aria-label="麦克风设备" value={inputs.some(d => d.deviceId === inputId) ? inputId : ''} onChange={event => { void changeDevice('audioinput', event.target.value); }}>
+            <option value="">系统默认</option>
+            {inputs.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{deviceLabel(d, i)}</option>)}
+          </select>
+        </label>
+        {canPickOutput
+          ? <label>扬声器
+              <select aria-label="扬声器设备" value={outputs.some(d => d.deviceId === outputId) ? outputId : ''} onChange={event => { void changeDevice('audiooutput', event.target.value); }}>
+                <option value="">系统默认</option>
+                {outputs.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{deviceLabel(d, i)}</option>)}
+              </select>
+            </label>
+          : <p className="audio-settings-note">此浏览器不支持在网页中选择扬声器，请在系统声音设置中切换。</p>}
+        <label>降噪
+          <select aria-label="降噪" value={noise} disabled={busy} onChange={event => { void changeNoise(event.target.value as NoiseMode); }}>
+            {noiseModes.map(m => <option key={m.id} value={m.id}>{m.label} · {m.description}</option>)}
+          </select>
+        </label>
+        <label className="switch-row">
+          <span>人声凸显<small>压低低频轰鸣与浑浊感，突出咬字并稳定音量</small></span>
+          <input type="checkbox" role="switch" aria-label="人声凸显" checked={boost} onChange={event => { void changeBoost(event.target.checked); }} />
+        </label>
+      </div>
+      {inputs.length > 0 && inputs.every(d => !d.label) && <small className="audio-settings-note">加入语音并允许麦克风后会显示设备名称。</small>}
+      {isStereoAudio(audioQuality) && <small className="audio-settings-note">当前为立体声音乐档位，降噪与人声凸显不生效。</small>}
+    </details>
     <div className="stage">
       {view.screens === 0 && <small>屏幕分享将在这里显示</small>}
       <div ref={screenHost} className="screen-tracks" />
