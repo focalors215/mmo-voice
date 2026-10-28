@@ -1,0 +1,82 @@
+name: voice-hub
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: voice_hub
+      POSTGRES_USER: voice_hub
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice_hub -d voice_hub"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  api:
+    build:
+      context: .
+      target: api
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22.23.3-alpine}
+    environment:
+      DATABASE_URL: postgres://voice_hub:${DB_PASSWORD}@127.0.0.1:15432/voice_hub
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      PORT: "3000"
+      HOST: "127.0.0.1"
+      LIVEKIT_INTERNAL_URL: "http://127.0.0.1:7880"
+    network_mode: host
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *logging
+  media:
+    image: livekit/livekit-server:v1.9.12
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *logging
+  gateway:
+    build:
+      context: .
+      target: gateway
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22.23.3-alpine}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:1.28.0-alpine}
+    network_mode: host
+    depends_on:
+      api:
+        condition: service_healthy
+      media:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:18080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    logging: *logging
+volumes:
+  postgres_data:

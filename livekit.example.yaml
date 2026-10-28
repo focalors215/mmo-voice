@@ -1,0 +1,23 @@
+port: 7880
+bind_addresses:
+  - 127.0.0.1
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+  node_ip: <SERVER_PUBLIC_IP>
+keys:
+  replace-api-key: replace-api-secret
+turn:
+  enabled: true
+  udp_port: 3478
+  relay_range_start: 30000
+  relay_range_end: 30100
+room:
+  auto_create: false
+  max_participants: 20
+  empty_timeout: 60
+  departure_timeout: 20
+logging:
+  level: info

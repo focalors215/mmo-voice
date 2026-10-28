@@ -1,0 +1,26 @@
+# Private runtime configuration (generated on the server, mode 600)
+.env
+livekit.yaml
+
+# Data and deployment-local files
+backups/
+tls/
+*.sql
+*.backup
+
+# Build output and dependencies
+**/node_modules/
+**/dist/
+
+# Test run artifacts
+tests/reports/
+
+# OS metadata
+.DS_Store
+._*
+
+# TypeScript build-mode output and local file snapshots
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+*.fullscreen-before

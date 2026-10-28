@@ -1,0 +1,1 @@
+{"name":"voice-hub-server","version":"1.0.0","private":true,"type":"module","engines":{"node":">=22"},"scripts":{"start":"node src/index.js"},"dependencies":{"express":"^5.1.0","livekit-server-sdk":"^2.15.0","pg":"^8.16.3"}}

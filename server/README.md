@@ -1,0 +1,1 @@
+# Voice Hub server\n\nRequires DATABASE_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET.
